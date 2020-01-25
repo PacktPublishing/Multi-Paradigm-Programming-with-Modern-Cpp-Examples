@@ -5,12 +5,12 @@ namespace constexpr_math {
     constexpr auto epsilon = 0.0001;
 
     template<typename number_t>
-    constexpr double abs(number_t value){
+    constexpr number_t abs(number_t value){
         return value > 0 ? value : -value;
     }
 
     template<typename number_t>
-    constexpr bool equal(number_t a, double b){
+    constexpr bool equal(number_t a, number_t b){
         return abs(a - b) < epsilon;
     }
 
@@ -22,7 +22,7 @@ namespace constexpr_math {
     static_assert(equal(rad(90.0), pi / 2));
 
     template<typename number_t>
-    constexpr double cos(number_t rad){
+    constexpr number_t cos(number_t rad){
         const auto n = 20; // higher n = better precision
         number_t sum = 1;
         number_t t = 1;
@@ -60,7 +60,7 @@ namespace constexpr_math {
             return cos_table[table_index];
         }
 
-        constexpr double cos(number_t deg) const {
+        constexpr number_t cos(number_t deg) const {
             // todo: error checking!
             return value_at(static_cast<unsigned>(deg * precision));
         }
@@ -73,6 +73,6 @@ int main(int, char**) {
     constexpr int precision = 10;
     constexpr auto c = constexpr_math::fast_cos<precision, double>{};
     constexpr auto c2 = constexpr_math::fast_cos<precision, float>{};
-    constexpr auto c3 = constexpr_math::fast_cos<precision, int>{};
+    //constexpr auto c3 = constexpr_math::fast_cos<precision, int>{};
     std::cout << c.cos(60.1) << std::endl;
 }
