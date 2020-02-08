@@ -9,6 +9,7 @@
                 "-g",
                 "${file}",
                 "-o",
+                "-std=c++2a",
                 "${fileDirname}/${fileBasenameNoExtension}"
             ],
             "options": {
@@ -30,6 +31,7 @@
                 "-g",
                 "${file}",
                 "-o",
+                "-std=c++2a",
                 "${fileDirname}/${fileBasenameNoExtension}"
             ],
             "options": {
