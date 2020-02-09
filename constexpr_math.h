@@ -5,6 +5,11 @@
 #include <type_traits>
 
 namespace constexpr_math {
+    template<typename T>
+    struct supports_equality_compare {
+        constexpr static bool value = false;
+    };
+
     constexpr auto pi = 3.14159265358979323846264;
     constexpr auto epsilon = 0.0001;
 
@@ -13,14 +18,21 @@ namespace constexpr_math {
         return value > number_t{0} ? value : -value;
     }
 
+
     template<typename number_t>
-    constexpr typename std::enable_if<std::is_floating_point<number_t>::value, bool>::type
+    constexpr typename std::enable_if<
+        std::is_floating_point<number_t>::value ||
+        !supports_equality_compare<number_t>::value, bool>::type
+    //requires (std::is_floating_point<number_t>::value || !supports_equality_compare<number_t>::value)
     equal(const number_t &a, const number_t &b){
         return abs(a - b) < epsilon;
     }
 
     template<typename integral_t>
-    constexpr typename std::enable_if<!std::is_floating_point<integral_t>::value, bool>::type
+    constexpr typename std::enable_if<
+        std::is_integral<integral_t>::value ||
+        supports_equality_compare<integral_t>::value, bool>::type
+    //requires (std::is_integral<integral_t>::value || supports_equality_compare<integral_t>::value)
     equal(const integral_t &a, const integral_t &b){
         return a == b;
     }

@@ -64,6 +64,16 @@ namespace fp_math {
         private:
         storage_type value_ = 0;
     };
+}
+
+namespace constexpr_math {
+    template<unsigned short precision_v>
+    struct supports_equality_compare<fp_math::number<precision_v>> {
+        constexpr static auto value = true;
+    };
+}
+
+namespace fp_math {
 
 
     using n4 = number<4>;
