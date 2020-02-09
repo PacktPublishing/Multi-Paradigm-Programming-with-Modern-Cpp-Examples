@@ -20,20 +20,16 @@ namespace constexpr_math {
 
 
     template<typename number_t>
-    constexpr typename std::enable_if<
-        std::is_floating_point<number_t>::value ||
-        !supports_equality_compare<number_t>::value, bool>::type
-    //requires (std::is_floating_point<number_t>::value || !supports_equality_compare<number_t>::value)
-    equal(const number_t &a, const number_t &b){
+    requires (std::is_floating_point<number_t>::value ||
+             !supports_equality_compare<number_t>::value)
+    constexpr bool equal(const number_t &a, const number_t &b){
         return abs(a - b) < epsilon;
     }
 
     template<typename integral_t>
-    constexpr typename std::enable_if<
-        std::is_integral<integral_t>::value ||
-        supports_equality_compare<integral_t>::value, bool>::type
-    //requires (std::is_integral<integral_t>::value || supports_equality_compare<integral_t>::value)
-    equal(const integral_t &a, const integral_t &b){
+    requires (std::is_integral<integral_t>::value ||
+              supports_equality_compare<integral_t>::value)
+    constexpr bool equal(const integral_t &a, const integral_t &b){
         return a == b;
     }
 
