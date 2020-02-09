@@ -68,7 +68,7 @@ namespace fp_math {
 
 namespace constexpr_math {
     template<unsigned short precision_v>
-    struct supports_equality_compare<fp_math::number<precision_v>> {
+    struct enable_exact_compare<fp_math::number<precision_v>> {
         constexpr static auto value = true;
     };
 }

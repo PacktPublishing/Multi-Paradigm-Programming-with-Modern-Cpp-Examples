@@ -6,12 +6,24 @@
 
 namespace constexpr_math {
     template<typename T>
-    struct supports_equality_compare {
+    struct enable_exact_compare {
         constexpr static bool value = false;
     };
 
-    constexpr auto pi = 3.14159265358979323846264;
-    constexpr auto epsilon = 0.0001;
+    template<typename T>
+    concept SupportsExactCompare = 
+              std::is_integral<T>::value ||
+              enable_exact_compare<T>::value;
+    
+
+    template<typename T>
+    concept HasRoundingErrors = 
+              std::is_floating_point<T>::value ||
+              !enable_exact_compare<T>::value;
+
+
+    constexpr HasRoundingErrors auto pi = 3.14159265358979323846264;
+    constexpr HasRoundingErrors auto epsilon = 0.0001;
 
     template<typename number_t>
     constexpr number_t abs(const number_t &value){
@@ -19,20 +31,15 @@ namespace constexpr_math {
     }
 
 
-    template<typename number_t>
-    requires (std::is_floating_point<number_t>::value ||
-             !supports_equality_compare<number_t>::value)
+    template<HasRoundingErrors number_t>
     constexpr bool equal(const number_t &a, const number_t &b){
         return abs(a - b) < epsilon;
     }
 
-    template<typename integral_t>
-    requires (std::is_integral<integral_t>::value ||
-              supports_equality_compare<integral_t>::value)
+    template<SupportsExactCompare integral_t>
     constexpr bool equal(const integral_t &a, const integral_t &b){
         return a == b;
     }
-
 
     template<typename number_t>
     constexpr number_t rad(const number_t &deg){
