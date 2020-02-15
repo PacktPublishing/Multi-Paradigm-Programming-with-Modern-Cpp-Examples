@@ -14,22 +14,33 @@ namespace constexpr_math {
     concept SupportsExactCompare = 
               std::is_integral<T>::value ||
               enable_exact_compare<T>::value;
-    
 
     template<typename T>
     concept HasRoundingErrors = 
               std::is_floating_point<T>::value ||
               !enable_exact_compare<T>::value;
 
+    template<typename T>
+    concept Arithmetic = requires(T a, T b){
+        a + b; a - b; a += b; a -= b;
+        a * b; a / b; a *= b; a /= b;
+    };
+
+    template<typename T>
+    concept Comparable = requires(T a, T b){
+        a < b; a > b;
+    };
+
+    template<typename T>
+    concept Number = Comparable<T> && Arithmetic<T>;
 
     constexpr HasRoundingErrors auto pi = 3.14159265358979323846264;
     constexpr HasRoundingErrors auto epsilon = 0.0001;
 
-    template<typename number_t>
+    template<Number number_t>
     constexpr number_t abs(const number_t &value){
         return value > number_t{0} ? value : -value;
     }
-
 
     template<HasRoundingErrors number_t>
     constexpr bool equal(const number_t &a, const number_t &b){
@@ -41,14 +52,14 @@ namespace constexpr_math {
         return a == b;
     }
 
-    template<typename number_t>
+    template<Number number_t>
     constexpr number_t rad(const number_t &deg){
         return deg * number_t{pi} / number_t{180.0};
     }
 
     static_assert(equal(rad(90.0), pi / 2));
 
-    template<typename number_t>
+    template<Number number_t>
     constexpr number_t cos(const number_t &rad){
         const auto n = 20; // higher n = better precision
         number_t sum = 1;
@@ -63,6 +74,11 @@ namespace constexpr_math {
         return sum;
     }
 
+    template<typename T>
+    concept Angle = requires(T t){
+        cos(t);
+    };
+
     static_assert(equal(cos(0.0), 1.0));
     static_assert(equal(cos(rad(60.0)), 0.50));
 
@@ -76,7 +92,8 @@ namespace constexpr_math {
 
         constexpr fast_cos() : cos_table() {
             for (auto i = size_t{0}; i < nof_values; ++i){
-                cos_table[i] = constexpr_math::cos(rad(static_cast<number_t>(i) / precision));
+                Number auto deg = static_cast<number_t>(i) / precision;
+                cos_table[i] = constexpr_math::cos(rad(deg));
             }
         }
 
@@ -95,31 +112,9 @@ namespace constexpr_math {
 
     static_assert(equal(fast_cos<10, double>{}.cos(60), 0.5));
 
-    template<typename number_t>
-    struct complex {
-        complex() = default;
-
-        template<typename r_t, typename i_t>
-        constexpr complex(r_t &&r, i_t &&i)
-            : real{std::forward<number_t>(r)}, imag{std::forward<number_t>(i)}
-            {}
-
-        number_t real;
-        number_t imag;
-    };
-
-    static_assert(complex<int>{0, 0}.real == 0);
-
-    template<typename number_t>
-    constexpr decltype(auto) make_complex(number_t &&real, number_t &&imag){
-        return complex<number_t>{std::forward<number_t>(real), std::forward<number_t>(imag)};
-    }
-
-    static_assert(make_complex(0, 0).real == 0);
-
-    template<typename number_t>
-    constexpr decltype(auto) pow(number_t &&value, unsigned exp){
-        typename std::remove_cvref<number_t>::type result = 1;
+    template<Number number_t>
+    constexpr decltype(auto) pow(const number_t &value, unsigned exp){
+        number_t result = 1;
         for (auto i = unsigned{0}; i < exp; ++i){
             result *= value;
         }
