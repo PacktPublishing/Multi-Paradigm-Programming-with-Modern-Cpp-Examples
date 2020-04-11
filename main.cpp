@@ -3,6 +3,7 @@
 #include <numeric>
 #include <thread>
 #include <vector>
+#include <future>
 
 int main(int argc, char *argv[]) {
 
@@ -12,28 +13,31 @@ int main(int argc, char *argv[]) {
     vector<double> daily_price = { 100.3, 101.5, 99.2, 105.1, 101.93,
                                    96.7, 97.6, 103.9, 105.8, 101.2};
 
-    double average = 0.0;
-    std::atomic_flag still_busy = true; // atomic<bool>
+    std::promise<double> average_promise;
 
     // Calculate average in a separate thread
     std::thread thread {
-        [&daily_price, &average, &still_busy](){
+        [&daily_price, &average_promise](){
+            auto average = 0.0;
+
             for (auto p: daily_price){
-                std::this_thread::sleep_for(2ms);
+                std::this_thread::sleep_for(200ms);
                 average += p;
             }
             average /= daily_price.size();
-            still_busy.clear(std::memory_order_release);
+            average_promise.set_value(average);
 
             std::this_thread::sleep_for(2s);
         }
     };
 
-    while (still_busy.test_and_set(std::memory_order_acquire)){
-        cout << "..."; // "progress bar"
-        std::this_thread::sleep_for(1ms);
+    auto future_average = average_promise.get_future();
+
+    while (future_average.wait_for(100ms) != future_status::ready){
+        cout << "."; // "progress bar"
+        cout.flush();
     }
-    cout << "Average value: " << average << endl;
+    cout << "Average value: " << future_average.get() << endl;
 
     thread.join(); // wait until the thread finishes
     cout << "Worker has finished working" << endl;
