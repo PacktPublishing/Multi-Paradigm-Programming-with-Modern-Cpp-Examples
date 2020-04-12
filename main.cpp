@@ -1,3 +1,5 @@
+#include "tasks.h"
+
 #include <chrono>
 #include <iostream>
 #include <numeric>
@@ -13,8 +15,10 @@ int main(int argc, char *argv[]) {
     vector<double> daily_price = { 100.3, 101.5, 99.2, 105.1, 101.93,
                                    96.7, 97.6, 103.9, 105.8, 101.2};
 
+    executor exec{24};
+
     // Async will take care of thread creation
-    auto future_average = std::async(std::launch::deferred,
+    auto stddev_task = run_task(exec,
         [&daily_price](){
             std::cout << "Calculation started..." << std::endl;
             auto average = 0.0;
@@ -25,14 +29,21 @@ int main(int argc, char *argv[]) {
             average /= daily_price.size();
             return average;
         }
-    );
-    std::this_thread::sleep_for(200ms);
+    )->then([&daily_price](double average){
+        auto sum_squares = 0.0;
+        for (auto price: daily_price){
+            auto distance = price - average;
+            sum_squares += distance * distance;
+        }
+        return sqrt(sum_squares / (daily_price.size() - 1));
+    })->then([](double stddev){
+        cout << stddev << endl;
+    })->then([](){
+        cout << "Done";
+    });
 
-    // Wait is optional
-    //while (future_average.wait_for(100ms) != future_status::ready){
-    //    cout << "."; // "progress bar"
-    //    cout.flush();
-    //}
-    cout << "Average value: " << flush << future_average.get() << endl;
+    cout << "Calculating..." << endl;
+    //cout << "Standard deviation: " << stddev_task->get_future().get() << endl;
+
 
 }

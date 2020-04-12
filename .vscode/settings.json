@@ -70,6 +70,9 @@
         "__tree": "cpp",
         "numeric": "cpp",
         "random": "cpp",
-        "span": "cpp"
+        "span": "cpp",
+        "thread": "cpp",
+        "queue": "cpp",
+        "__functional_base_03": "cpp"
     }
 }
