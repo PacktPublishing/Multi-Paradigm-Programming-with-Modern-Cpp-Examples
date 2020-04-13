@@ -6,6 +6,7 @@
 #include <queue>
 #include <type_traits>
 #include <memory>
+#include <iostream>
 
 // Base class for all kinds of tasks that can be executed
 class executable : public std::enable_shared_from_this<executable>{
@@ -84,6 +85,7 @@ class executor {
         // Don't make queue users wait while this one executes
         queue_lock.unlock();
 
+        std::cout << "Executor Executing" << std::endl;
         next->execute();
     }
 
@@ -97,6 +99,30 @@ class executor {
 
     std::atomic<bool> active_ = true;
 };
+
+    template<typename t>
+    inline auto join_all_(t &task){
+        return std::make_tuple(task->get_future().get());
+    }
+
+    template<typename t, typename... tasks_t>
+    inline auto join_all_(t &task, tasks_t& ...tasks){
+        return std::tuple_cat(join_all_(task), join_all_(tasks...));
+    }
+
+    template<typename... tasks_t>
+    inline auto join_all_x(tasks_t&& ...tasks){
+        return join_all_(tasks...);
+    }
+
+    template<typename ...tasks_t>
+    inline auto join_all(std::tuple<tasks_t...> &tasks){
+        return std::apply([](auto &&... args){
+            //return std::make_tuple(0, 1, 2);
+            return join_all_x(args...);
+        }, tasks);
+    }
+
 
 // A few concepts to simplify templates
 
@@ -121,8 +147,9 @@ class task : public executable {
     using result_t = result;
 
     template<NullaryFunction fn_t>
-    task(fn_t &&fn)
-        : fn_{std::forward<fn_t>(fn)}{
+    task(executor &e, fn_t &&fn)
+        : executor_{e}
+        , fn_{std::forward<fn_t>(fn)}{
     }
 
     // Can only be called once. Can't be called when using then()
@@ -136,7 +163,7 @@ class task : public executable {
     template<UnaryFunction<result> function_type>
     auto then(const function_type &what) {
         using r = typename std::invoke_result<function_type, result_t>::type;
-        auto tsk = std::make_shared<task<r>>(
+        auto tsk = std::make_shared<task<r>>(executor_,
             [what, parent{shared_from_this()}]() mutable {
                 // Exception in parent future would get re-thrown
                 return what(static_pointer_cast<task<result_t>>(parent)->get_future().get());
@@ -150,7 +177,7 @@ class task : public executable {
     template<NullaryFunction function_type>
     auto then(const function_type &what){
         using r = typename std::invoke_result<function_type>::type;
-        auto tsk = std::make_shared<task<r>>(
+        auto tsk = std::make_shared<task<r>>(executor_,
             [what, parent{shared_from_this()}]() mutable {
                 // Exception in parent future would get re-thrown
                 static_pointer_cast<task<result_t>>(parent)->get_future().get();
@@ -161,16 +188,44 @@ class task : public executable {
         return tsk;
     }
 
-    //TODO: the following 2 functions are work in progess
-    template<UnaryFunction<result> fn_t>
-    auto fork(const function_type &fn){
-
-    }
-
     template<UnaryFunction<result> fn_t, UnaryFunction<result> ...more>
-    auto fork(const function_type &fn, more... fns){
+    auto then_fork(const fn_t &fn, more... fns){
+        auto tasks_tuple = then_fork_(get_future().share(), fn, fns...);
 
+        using r = decltype(join_all(tasks_tuple));
+
+         auto join_task = std::make_shared<task<r>>(executor_,
+             [tasks_tuple, parent{shared_from_this()}]() mutable {
+                 // Unfortunately, one thread in the pool will have to block until
+                 // all continuation tasks are finished.
+                 // We'll find a way to solve this when we talk about coroutines
+                 return join_all(tasks_tuple);
+             }
+         );
+         then_ = join_task;
+         return join_task;
     }
+
+
+    template<typename shared_future_t, UnaryFunction<result> fn_t, UnaryFunction<result> ...more>
+    auto then_fork_(shared_future_t sf, const fn_t &fn, more&... fns){
+        return std::tuple_cat(then_fork_(sf, fn), then_fork_(sf, fns...));
+    }
+
+    //TODO: the following 2 functions are work in progess
+    template<typename shared_future_t, UnaryFunction<result> fn_t>
+    auto then_fork_(shared_future_t sf, const fn_t &fn){
+        using r = typename std::invoke_result<fn_t, result>::type;
+        auto tsk = std::make_shared<task<r>>(executor_,
+            [future{std::move(sf)}, fn, parent{shared_from_this()}]() mutable {
+                return fn(future.get());
+            }
+        );
+        // Fork must schedule the task in executor!
+        executor_.schedule(tsk);
+        return std::make_tuple(tsk);
+    }
+
 
 private:
     void execute() override{
@@ -190,10 +245,12 @@ private:
         promise_.set_value(fn_());
     }
 
+    executor &executor_;
     std::function<result_t(void)> fn_;
     std::promise<result_t> promise_;
 
     executable_ptr then_;
+
 };
 
 // promise<void> does not have an argument in set_value
@@ -207,7 +264,7 @@ inline void task<void>::execute_impl() {
 // Like std::async, but requires executor and returns task
 template<NullaryFunction function_type>
 inline auto run_task(executor &ex, function_type &&fn){
-    auto t = std::make_shared<task<decltype(fn())>>(std::forward<function_type>(fn));
+    auto t = std::make_shared<task<decltype(fn())>>(ex, std::forward<function_type>(fn));
     ex.schedule(t);
     return t;
 }
