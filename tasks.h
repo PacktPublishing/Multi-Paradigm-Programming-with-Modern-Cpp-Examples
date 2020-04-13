@@ -6,7 +6,7 @@
 #include <queue>
 #include <type_traits>
 #include <memory>
-#include <iostream>
+#include <string>
 
 // Base class for all kinds of tasks that can be executed
 class executable : public std::enable_shared_from_this<executable>{
@@ -43,6 +43,14 @@ class executor {
         }
         // One thread can pick up the task
         wakeup_.notify_one();
+    }
+
+    void set_task_name(std::string name) noexcept{
+        task_name_ = std::move(name);
+    }
+
+    const std::string &get_task_name() const noexcept {
+        return task_name_;
     }
 
     private:
@@ -85,11 +93,12 @@ class executor {
         // Don't make queue users wait while this one executes
         queue_lock.unlock();
 
-        std::cout << "Executor Executing" << std::endl;
         next->execute();
+        //task_name_.clear();
     }
-
     private:
+    static std::string task_name_;
+
     std::vector<std::thread> threads_;
     std::queue<executable_ptr> queue_;
     std::mutex queue_mutex_;
@@ -99,6 +108,8 @@ class executor {
 
     std::atomic<bool> active_ = true;
 };
+
+std::string executor::task_name_;
 
     template<typename t>
     inline auto join_all_(t &task){
@@ -230,7 +241,15 @@ class task : public executable {
 private:
     void execute() override{
         try {
-            execute_impl();
+            try {
+                execute_impl();
+            }
+            catch(...){
+                std::string name = executor_.get_task_name();
+                if (name.empty())
+                    name = "<unnamed task>";
+                std::throw_with_nested(std::runtime_error("Exception thrown in task " + name));
+            }
         }
         catch(...){
             promise_.set_exception(std::current_exception());

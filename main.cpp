@@ -38,7 +38,9 @@ int main(int argc, char *argv[]) {
             }
             return sqrt(sum_squares / (daily_price.size() - 1));
         },
-        [&daily_price](double average){
+        [&daily_price, &exec](double average){
+            exec.set_task_name("Find items above average");
+
             throw std::runtime_error("oops");
             std::vector<double> above_average;
             std::copy_if(daily_price.begin(), daily_price.end(),
@@ -61,6 +63,6 @@ int main(int argc, char *argv[]) {
     cout << "Calculating..." << endl;
     //cout << "Standard deviation: " << stddev_task->get_future().get() << endl;
 
-    std::this_thread::sleep_for(20s);
+    //std::this_thread::sleep_for(20s);
 
 }
