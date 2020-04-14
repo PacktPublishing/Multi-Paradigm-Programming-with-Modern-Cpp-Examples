@@ -7,6 +7,18 @@
 #include <vector>
 #include <future>
 
+// prints the explanatory string of an exception. If the exception is nested,
+// recurses to print the explanatory of the exception it holds
+void print_exception(const std::exception& e, int level =  0)
+{
+    std::cerr << std::string(level, ' ') << "exception: " << e.what() << '\n';
+    try {
+        std::rethrow_if_nested(e);
+    } catch(const std::exception& e) {
+        print_exception(e, level+1);
+    } catch(...) {}
+}
+ 
 int main(int argc, char *argv[]) {
 
     using namespace std;
@@ -20,6 +32,7 @@ int main(int argc, char *argv[]) {
     // Async will take care of thread creation
     auto future = run_task(exec,
         [&daily_price](){
+            executor::set_task_name("Calculate average value");
             std::cout << "Calculation started..." << std::endl;
             auto average = 0.0;
             for (auto p: daily_price){
@@ -30,7 +43,8 @@ int main(int argc, char *argv[]) {
             return average;
         }
     )->then_fork(
-        [&daily_price](double average){
+        [&daily_price, &exec](double average){
+            executor::set_task_name("Find standard deviation");
             auto sum_squares = 0.0;
             for (auto price: daily_price){
                 auto distance = price - average;
@@ -39,30 +53,31 @@ int main(int argc, char *argv[]) {
             return sqrt(sum_squares / (daily_price.size() - 1));
         },
         [&daily_price, &exec](double average){
-            exec.set_task_name("Find items above average");
+            executor::set_task_name("Find items above average");
+            throw std::runtime_error("hello");
 
-            throw std::runtime_error("oops");
             std::vector<double> above_average;
             std::copy_if(daily_price.begin(), daily_price.end(),
                 std::back_inserter(above_average),
                 [average](double price){ return price > average; });
             return above_average;
         }
-    )->then([](auto &&result_tuple){
-        cout << "Standard deviation: " << std::get<0>(result_tuple) << std::endl;
-        cout << "Elements above average: " << std::get<1>(result_tuple).size() << std::endl;
-    })->get_future();
+    )->then(
+        [&exec](auto &&result_tuple){
+            executor::set_task_name("Final join");
+            cout << "Standard deviation: " << std::get<0>(result_tuple) << std::endl;
+            cout << "Elements above average: " << std::get<1>(result_tuple).size() << std::endl;
+        }
+    )->get_future();
 
+    cout << "Calculating..." << endl;
 
     try {
         future.get();
     }
     catch(const std::exception &e){
-        cout << "A task has thrown an exception: " << e.what() << std::endl;
+        print_exception(e);
     }
-    cout << "Calculating..." << endl;
-    //cout << "Standard deviation: " << stddev_task->get_future().get() << endl;
 
-    //std::this_thread::sleep_for(20s);
-
+    cout << "Finished" << endl;
 }

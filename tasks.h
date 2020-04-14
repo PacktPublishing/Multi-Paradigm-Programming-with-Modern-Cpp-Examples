@@ -7,6 +7,8 @@
 #include <type_traits>
 #include <memory>
 #include <string>
+#include <sstream>
+#include <iostream>
 
 // Base class for all kinds of tasks that can be executed
 class executable : public std::enable_shared_from_this<executable>{
@@ -45,11 +47,11 @@ class executor {
         wakeup_.notify_one();
     }
 
-    void set_task_name(std::string name) noexcept{
+    static void set_task_name(std::string name) noexcept{
         task_name_ = std::move(name);
     }
 
-    const std::string &get_task_name() const noexcept {
+    static const std::string &get_task_name() noexcept {
         return task_name_;
     }
 
@@ -97,7 +99,8 @@ class executor {
         //task_name_.clear();
     }
     private:
-    static std::string task_name_;
+    static thread_local std::string task_name_;
+    static_assert(__has_feature(cxx_thread_local) );
 
     std::vector<std::thread> threads_;
     std::queue<executable_ptr> queue_;
@@ -109,7 +112,6 @@ class executor {
     std::atomic<bool> active_ = true;
 };
 
-std::string executor::task_name_;
 
     template<typename t>
     inline auto join_all_(t &task){
@@ -177,6 +179,7 @@ class task : public executable {
         auto tsk = std::make_shared<task<r>>(executor_,
             [what, parent{shared_from_this()}]() mutable {
                 // Exception in parent future would get re-thrown
+                executor::set_task_name("Continuation wrapper");
                 return what(static_pointer_cast<task<result_t>>(parent)->get_future().get());
             }
         );
@@ -210,6 +213,9 @@ class task : public executable {
                  // Unfortunately, one thread in the pool will have to block until
                  // all continuation tasks are finished.
                  // We'll find a way to solve this when we talk about coroutines
+                 std::stringstream s;
+                 s << "Join " << std::tuple_size<decltype(tasks_tuple)>() << " tasks";
+                 executor::set_task_name(s.str());
                  return join_all(tasks_tuple);
              }
          );
@@ -229,6 +235,8 @@ class task : public executable {
         using r = typename std::invoke_result<fn_t, result>::type;
         auto tsk = std::make_shared<task<r>>(executor_,
             [future{std::move(sf)}, fn, parent{shared_from_this()}]() mutable {
+                executor::set_task_name("Fork wrapper");
+                std::cout << "Waiting for parent task" << std::endl;
                 return fn(future.get());
             }
         );
@@ -237,7 +245,6 @@ class task : public executable {
         return std::make_tuple(tsk);
     }
 
-
 private:
     void execute() override{
         try {
@@ -245,16 +252,21 @@ private:
                 execute_impl();
             }
             catch(...){
-                std::string name = executor_.get_task_name();
-                if (name.empty())
-                    name = "<unnamed task>";
-                std::throw_with_nested(std::runtime_error("Exception thrown in task " + name));
+                std::stringstream s;
+                s << "Excepion thrown from task: ";
+                
+                if (auto name = executor_.get_task_name(); !name.empty())
+                    s << name;
+                else
+                    s << "<unnamed task>";
+                s << " (" << std::hex << this << ")";
+                std::throw_with_nested(std::runtime_error(s.str()));
             }
         }
         catch(...){
             promise_.set_exception(std::current_exception());
         }
-
+        executor_.set_task_name(std::string{});
         if (then_){
             then_->execute();
         }
@@ -269,7 +281,6 @@ private:
     std::promise<result_t> promise_;
 
     executable_ptr then_;
-
 };
 
 // promise<void> does not have an argument in set_value
