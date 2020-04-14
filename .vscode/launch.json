@@ -17,6 +17,12 @@
             "MIMode": "lldb"
         },
         {
+            "name": "Launch",
+            "type": "lldb-vscode",
+            "request": "attach",
+            "program": "${workspaceRoot}/build/example",
+        },
+        {
             "type": "lldb-mi",
             "request": "launch",
             "name": "Launch Program",

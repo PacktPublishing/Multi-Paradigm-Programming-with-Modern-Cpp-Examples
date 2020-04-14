@@ -73,6 +73,8 @@
         "span": "cpp",
         "thread": "cpp",
         "queue": "cpp",
-        "__functional_base_03": "cpp"
+        "__functional_base_03": "cpp",
+        "future": "cpp",
+        "map": "cpp"
     }
 }

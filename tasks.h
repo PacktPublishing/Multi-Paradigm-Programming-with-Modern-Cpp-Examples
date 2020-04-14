@@ -113,28 +113,27 @@ class executor {
 };
 
 
+namespace tasks_helpers {
     template<typename t>
-    inline auto join_all_(t &task){
+    inline auto join_all_(t &&task){
         return std::make_tuple(task->get_future().get());
     }
 
     template<typename t, typename... tasks_t>
-    inline auto join_all_(t &task, tasks_t& ...tasks){
-        return std::tuple_cat(join_all_(task), join_all_(tasks...));
-    }
-
-    template<typename... tasks_t>
-    inline auto join_all_x(tasks_t&& ...tasks){
-        return join_all_(tasks...);
+    inline auto join_all_(t &&task, tasks_t&& ...tasks){
+        return std::tuple_cat(
+            join_all_(std::forward<t>(task)),
+            join_all_(std::forward<tasks_t...>(tasks...)));
     }
 
     template<typename ...tasks_t>
     inline auto join_all(std::tuple<tasks_t...> &tasks){
         return std::apply([](auto &&... args){
             //return std::make_tuple(0, 1, 2);
-            return join_all_x(args...);
+            return join_all_(args...);
         }, tasks);
     }
+}
 
 
 // A few concepts to simplify templates
@@ -206,17 +205,17 @@ class task : public executable {
     auto then_fork(const fn_t &fn, more... fns){
         auto tasks_tuple = then_fork_(get_future().share(), fn, fns...);
 
-        using r = decltype(join_all(tasks_tuple));
+        using r = decltype(tasks_helpers::join_all(tasks_tuple));
 
          auto join_task = std::make_shared<task<r>>(executor_,
-             [tasks_tuple, parent{shared_from_this()}]() mutable {
+             [tasks_tuple{std::move(tasks_tuple)}, parent{shared_from_this()}]() mutable {
                  // Unfortunately, one thread in the pool will have to block until
                  // all continuation tasks are finished.
                  // We'll find a way to solve this when we talk about coroutines
                  std::stringstream s;
                  s << "Join " << std::tuple_size<decltype(tasks_tuple)>() << " tasks";
                  executor::set_task_name(s.str());
-                 return join_all(tasks_tuple);
+                 return tasks_helpers::join_all(tasks_tuple);
              }
          );
          then_ = join_task;
@@ -224,6 +223,7 @@ class task : public executable {
     }
 
 
+private:
     template<typename shared_future_t, UnaryFunction<result> fn_t, UnaryFunction<result> ...more>
     auto then_fork_(shared_future_t sf, const fn_t &fn, more&... fns){
         return std::tuple_cat(then_fork_(sf, fn), then_fork_(sf, fns...));
@@ -245,7 +245,6 @@ class task : public executable {
         return std::make_tuple(tsk);
     }
 
-private:
     void execute() override{
         try {
             try {
@@ -298,3 +297,6 @@ inline auto run_task(executor &ex, function_type &&fn){
     ex.schedule(t);
     return t;
 }
+
+template<typename result>
+using task_ptr = std::shared_ptr<task<result>>;
