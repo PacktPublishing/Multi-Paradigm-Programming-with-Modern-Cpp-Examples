@@ -28,9 +28,11 @@ class executor {
     }
 
     ~executor() {
-        // All threads need to be joined before they're destroyed
-        active_ = false;
+        // Notify all threads that we're shutting down
+        active_.store(false, std::memory_order_release);
         wakeup_.notify_all();
+
+        // All threads need to be joined before they're destroyed
         for (auto &t: threads_){
             t.join();
         }
@@ -38,19 +40,11 @@ class executor {
 
     void schedule(executable_ptr what){
         {
-            std::scoped_lock lock(queue_mutex_);
+            std::scoped_lock lock(mutex_);
             queue_.push(std::move(what));
         }
         // One thread can pick up the task
         wakeup_.notify_one();
-    }
-
-    static void set_task_name(std::string name) noexcept{
-        task_name_ = std::move(name);
-    }
-
-    static const std::string &get_task_name() noexcept {
-        return task_name_;
     }
 
     private:
@@ -63,41 +57,36 @@ class executor {
     }
 
     void run_executor_thread() noexcept {
-        while (active_) {
-            // Wait for a new executable...
-            std::unique_lock cv_lock{wakeup_mutex_};
-            wakeup_.wait(cv_lock);
-            // ...don't make other executor threads wait while this one gets executed
-            cv_lock.unlock();
+        while (true)
+        {
+            std::unique_lock lock{mutex_};
 
-            execute_next();
+            // Wait, and ignore notifications while the queue is empty and executor is active
+            bool active = true;
+            wakeup_.wait(lock, [this, &active]() {
+                active = this->active_.load(std::memory_order_acquire);
+                return !(this->queue_.empty() && active);
+            });
+
+            if (!active)
+                break;
+
+            // Queue is not empty. Pop an element and execute
+            auto next = std::move(queue_.front());
+            queue_.pop();
+            // Don't make anyone wait until this task executes
+            lock.unlock();
+
+            next->execute();
         }
     }
 
-    void execute_next() noexcept
-    {
-        std::unique_lock queue_lock{queue_mutex_};
-        // Another thread might've popped this one in between
-        if (queue_.empty())
-            return;
-        
-        auto next = std::move(queue_.front());
-        queue_.pop();
-        // Don't make queue users wait while this one executes
-        queue_lock.unlock();
-
-        next->execute();
-        task_name_.clear();
-    }
-
     private:
-    static thread_local std::string task_name_;
 
     std::vector<std::thread> threads_;
-    std::queue<executable_ptr> queue_;
-    std::mutex queue_mutex_;
 
-    std::mutex wakeup_mutex_;
+    std::mutex mutex_;
+    std::queue<executable_ptr> queue_;
     std::condition_variable wakeup_;
 
     std::atomic<bool> active_ = true;

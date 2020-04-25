@@ -9,7 +9,7 @@ SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CLANG_CPP_VERSION_FLAGS} ${CLANG_MISC_
 include(CTest)
 enable_testing()
 
-add_executable(example main.cpp tasks.cpp executor.cpp)
+add_executable(example main.cpp task_name.cpp executor.cpp)
 
 set(RANGE_V3 "/Users/gpa/libs/ranges/range-v3/include")
 target_include_directories(example PRIVATE ${RANGE_V3})

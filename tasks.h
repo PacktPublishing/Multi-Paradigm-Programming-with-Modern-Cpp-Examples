@@ -1,6 +1,7 @@
 #pragma once
 
 #include "executor.h"
+#include "task_name.h"
 
 #include <future>
 #include <type_traits>
@@ -26,6 +27,25 @@ namespace tasks_helpers {
     inline auto wait_for_tasks(std::tuple<tasks_t...> &tasks){
         return std::apply([](auto &&... args){
             return wait_for_tasks(args...);
+        }, tasks);
+    }
+
+
+    template<typename t>
+    inline void schedule_tasks(executor &exec, t &&task){
+        return exec.schedule(task);
+    }
+
+    template<typename t, typename ...tasks_t>
+    inline void schedule_tasks(executor &exec, t &&task, tasks_t&& ...tasks){
+        schedule_tasks(exec, task);
+        schedule_tasks(exec, tasks...);
+    }
+
+    template<typename ...tasks_t>
+    inline void schedule_tasks(executor &exec, std::tuple<tasks_t...> &tasks){
+        return std::apply([&exec](auto &&... tasks){
+            schedule_tasks(exec, tasks...);
         }, tasks);
     }
 }
@@ -73,7 +93,7 @@ class task : public executable {
         auto tsk = std::make_shared<task<r>>(executor_,
             [what, parent{shared_from_this()}]() mutable {
                 // Exception in parent future would get re-thrown
-                executor::set_task_name("Continuation wrapper");
+                set_task_name("Continuation wrapper");
                 return what(static_pointer_cast<task<result_t>>(parent)->get_future().get());
             }
         );
@@ -102,22 +122,28 @@ class task : public executable {
 
         using r = decltype(tasks_helpers::wait_for_tasks(tasks_tuple));
 
-         auto join_task = std::make_shared<task<r>>(executor_,
-             [tasks_tuple{std::move(tasks_tuple)}, parent{shared_from_this()}]() mutable {
+        auto fork_join_task = std::make_shared<task<r>>(executor_,
+             [tasks_tuple{std::move(tasks_tuple)}, parent{shared_from_this()}, exec{&this->executor_}]() mutable {
                  // Unfortunately, one thread in the pool will have to block until
                  // all continuation tasks are finished.
                  // We'll find a way to solve this when we talk about coroutines
                  std::stringstream s;
-                 s << "Join " << std::tuple_size<decltype(tasks_tuple)>() << " tasks";
-                 executor::set_task_name(s.str());
+                 s << "Fork/join " << std::tuple_size<decltype(tasks_tuple)>() << " tasks";
+                 set_task_name(s.str());
+
+                 // Fork part: schedule the tasks in executor!
+                 // Performance issue: there is a delay between this task being finished,
+                 // and continuation tasks starting.
+                 // We could solve this by adding a separate fork task,
+                 // but that would block an entire thread
+                 tasks_helpers::schedule_tasks(*exec, tasks_tuple);
+
                  return tasks_helpers::wait_for_tasks(tasks_tuple);
              }
          );
-         then_ = join_task;
-         return join_task;
+         then_ = fork_join_task;
+         return fork_join_task;
     }
-
-
 private:
     template<typename shared_future_t, UnaryFunction<result> fn_t, UnaryFunction<result> ...more>
     auto make_tasks_tuple(shared_future_t sf, const fn_t &fn, more&... fns){
@@ -130,13 +156,11 @@ private:
         using r = typename std::invoke_result<fn_t, result>::type;
         auto tsk = std::make_shared<task<r>>(executor_,
             [future{std::move(sf)}, fn, parent{shared_from_this()}]() mutable {
-                executor::set_task_name("Fork wrapper");
+                set_task_name("Fork wrapper");
                 std::cout << "Waiting for parent task" << std::endl;
                 return fn(future.get());
             }
         );
-        // Fork must schedule the task in executor!
-        executor_.schedule(tsk);
         return std::make_tuple(tsk);
     }
 
@@ -149,7 +173,7 @@ private:
                 std::stringstream s;
                 s << "Excepion thrown from task: ";
                 
-                if (auto name = executor_.get_task_name(); !name.empty())
+                if (auto name = get_task_name(); !name.empty())
                     s << name;
                 else
                     s << "<unnamed task>";
@@ -160,30 +184,33 @@ private:
         catch(...){
             promise_.set_exception(std::current_exception());
         }
-        executor_.set_task_name(std::string{});
+
+        // This task has finished; name is no longer necessary
+        set_task_name(std::string{});
+
         if (then_){
             then_->execute();
         }
     }
 
     void execute_impl() {
-        promise_.set_value(fn_());
+        if constexpr (std::is_same<result_t, void>::value){
+            fn_();
+            promise_.set_value();
+        }
+        else {
+            promise_.set_value(fn_());
+        }
     }
 
     executor &executor_;
+
     std::function<result_t(void)> fn_;
     std::promise<result_t> promise_;
 
     executable_ptr then_;
 };
 
-// promise<void> does not have an argument in set_value
-// Hence this specialization
-template<>
-inline void task<void>::execute_impl() {
-   fn_();
-   promise_.set_value();
-}
 
 // Like std::async, but requires executor and returns task
 template<NullaryFunction function_type>

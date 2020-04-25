@@ -38,7 +38,7 @@ auto find_above_average(iterator_t from, iterator_t to, double average) {
                  std::back_inserter(above_average),
                  [average](double price) {
                      std::cout << "Performing a long operation..." << std::endl;
-                     loop_for(10s);
+                     loop_for(3s);
                      return price > average;
                  });
     return above_average;
@@ -56,7 +56,8 @@ int main(int argc, char *argv[]) {
     // Async will take care of thread creation
     auto future = run_task(exec,
         [&daily_price](){
-            executor::set_task_name("Calculate average value");
+            set_task_name("Calculate average value");
+
             std::cout << "Calculation started..." << std::endl;
             auto average = 0.0;
             for (auto p: daily_price){
@@ -68,7 +69,8 @@ int main(int argc, char *argv[]) {
         }
     )->then_fork(
         [&daily_price](double average){
-            executor::set_task_name("Find standard deviation");
+            set_task_name("Find standard deviation");
+
             auto sum_squares = 0.0;
             for (auto price: daily_price){
                 auto distance = price - average;
@@ -77,7 +79,7 @@ int main(int argc, char *argv[]) {
             return sqrt(sum_squares / (daily_price.size() - 1));
         },
         [&daily_price, &exec](double average){
-            executor::set_task_name("Find items above average");
+            set_task_name("Find items above average");
             
             vector<double> above_average;
 
@@ -112,7 +114,7 @@ int main(int argc, char *argv[]) {
         }
     )->then(
         [&exec](auto &&result_tuple){
-            executor::set_task_name("Final join");
+            set_task_name("Final join");
             cout << "Standard deviation: " << std::get<0>(result_tuple) << std::endl;
             cout << "Elements above average: " << std::get<1>(result_tuple).size() << std::endl;
         }
