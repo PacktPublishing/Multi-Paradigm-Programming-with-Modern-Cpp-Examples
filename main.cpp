@@ -37,8 +37,8 @@ auto find_above_average(iterator_t from, iterator_t to, double average) {
     std::copy_if(from, to,
                  std::back_inserter(above_average),
                  [average](double price) {
-                     std::cout << "Performing a long operation..." << std::endl;
-                     loop_for(3s);
+                     std::cout << "Performing a long operation on thread " << std::this_thread::get_id() << std::endl;
+                     loop_for(2s);
                      return price > average;
                  });
     return above_average;
@@ -51,7 +51,8 @@ int main(int argc, char *argv[]) {
     vector<double> daily_price = { 100.3, 101.5, 99.2, 105.1, 101.93,
                                    96.7, 97.6, 103.9, 105.8, 101.2};
 
-    executor exec{4};
+    constexpr auto max_concurrency = 4;
+    executor exec{max_concurrency};
 
     // Async will take care of thread creation
     auto future = run_task(exec,
@@ -83,32 +84,37 @@ int main(int argc, char *argv[]) {
             
             vector<double> above_average;
 
-            constexpr auto max_concurrency = 6;
+            const auto nof_chunks = max_concurrency;
+            const auto chunk_size = daily_price.size() / max_concurrency;
 
             auto from = daily_price.begin();
-            const auto step = 1 + daily_price.size() / max_concurrency;
-            auto to = from + step;
+            auto to = from + chunk_size;
 
             vector<task_ptr<vector<double>>> tasks;
 
-            for (auto i = 0; i < max_concurrency; ++i){
+            auto start = chrono::steady_clock::now();
+
+            for (auto i = 0; i < nof_chunks; ++i){
+                if (i == nof_chunks - 1)
+                    to = daily_price.end();
+
                 tasks.push_back(run_task(exec, [average, from, to](){
                     return find_above_average(from, to, average);
                 }));
 
                 from = to;
-                to += step;
-                if (to > daily_price.end()){
-                    to = daily_price.end();
-                }
+                to += chunk_size;
             }
-            
 
             // "Join"
             for (auto &t: tasks){
                 auto task_result = t->get_future().get();
                 above_average.insert(above_average.end(), task_result.begin(), task_result.end());
             }
+
+            cout << "Elapsed time in seconds: "
+                 << chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - start).count()
+                 << endl;
 
             return above_average;
         }
