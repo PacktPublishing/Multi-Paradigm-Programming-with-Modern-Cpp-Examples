@@ -23,7 +23,7 @@ class executor {
     executor(size_t nof_threads) {
         // Launch a pool of threads
         for (size_t i = 0; i < nof_threads; ++i){
-            add_thread();
+            threads_.emplace_back(&executor::run_thread, this);
         }
     }
 
@@ -39,6 +39,10 @@ class executor {
     }
 
     void schedule(executable_ptr what){
+        if (!active_.load(std::memory_order_acquire)){
+            throw std::runtime_error("Executor is being destroyed. You can't schedule any more work.");
+        }
+
         {
             std::scoped_lock lock(mutex_);
             queue_.push(std::move(what));
@@ -49,26 +53,18 @@ class executor {
 
     private:
 
-    void add_thread() {
-        threads_.emplace_back(
-            [this]() {
-                run_executor_thread();
-            });
-    }
-
-    void run_executor_thread() noexcept {
+    void run_thread() noexcept {
         while (true)
         {
             std::unique_lock lock{mutex_};
 
             // Wait, and ignore notifications while the queue is empty and executor is active
-            bool active = true;
-            wakeup_.wait(lock, [this, &active]() {
-                active = this->active_.load(std::memory_order_acquire);
+            wakeup_.wait(lock, [this]() {
+                auto active = this->active_.load(std::memory_order_acquire);
                 return !(this->queue_.empty() && active);
             });
 
-            if (!active)
+            if (queue_.empty())
                 break;
 
             // Queue is not empty. Pop an element and execute
