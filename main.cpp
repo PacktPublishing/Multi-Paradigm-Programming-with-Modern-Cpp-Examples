@@ -123,7 +123,7 @@ int main(int argc, char *argv[]) {
     cout << "Calculating..." << endl;
 
     try {
-        //future.get();
+        future.get();
     }
     catch(const std::exception &e){
         print_exception(e);
