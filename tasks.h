@@ -6,6 +6,7 @@
 #include <future>
 #include <type_traits>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <sstream>
 #include <iostream>
@@ -49,10 +50,7 @@ namespace tasks_helpers {
         }, tasks);
     }
 }
-
-
 // A few concepts to simplify templates
-
 template<typename F> // function with no arguments
 concept NullaryFunction = std::is_invocable<F>::value;
 
@@ -74,45 +72,35 @@ class task : public executable {
     using result_t = result;
 
     template<NullaryFunction fn_t>
-    task(executor &e, fn_t &&fn)
-        : executor_{e}
-        , fn_{std::forward<fn_t>(fn)}{
-    }
-
-    // Can only be called once. Can't be called when using then()
-    auto get_future() {
+    explicit task(executor &ex, fn_t &&fn)
+        : fn_{std::forward<fn_t>(fn)}
+        , executor_(ex)
+        {
+        }
+    [[nodiscard]]
+    auto get_future(){
         return promise_.get_future();
     }
 
-    // Continuation: Schedule a task immediately after this finishes
-    // Then can be used to pass results between tasks
-    // The beauty is that the tasks get executed bypassing the queue (on the same thread as previous task)
-    template<UnaryFunction<result> function_type>
-    auto then(const function_type &what) {
+    template<UnaryFunction<result_t> function_type>
+    auto then(const function_type &what){
+        // Return type of what() call
         using r = typename std::invoke_result<function_type, result_t>::type;
         auto tsk = std::make_shared<task<r>>(executor_,
-            [what, parent{shared_from_this()}]() mutable {
-                // Exception in parent future would get re-thrown
-                set_task_name("Continuation wrapper");
-                return what(static_pointer_cast<task<result_t>>(parent)->get_future().get());
+            [what, parent{shared_from_this()}] () mutable {
+                auto future = static_cast<task<result_t>&>(*parent).get_future();
+                return what(future.get());
             }
         );
-        then_ = tsk;
-        return tsk;
-    }
-
-    // Same as above, but for void 
-    template<NullaryFunction function_type>
-    auto then(const function_type &what){
-        using r = typename std::invoke_result<function_type>::type;
-        auto tsk = std::make_shared<task<r>>(executor_,
-            [what, parent{shared_from_this()}]() mutable {
-                // Exception in parent future would get re-thrown
-                static_pointer_cast<task<result_t>>(parent)->get_future().get();
-                return what();
+        {
+            std::scoped_lock lock{mutex_};
+            if (!has_finished_){
+                next_ = tsk;
+                return tsk;
             }
-        );
-        then_ = tsk;
+        }
+        // this has finished executing! Schedule the task directly with executor
+        executor_.schedule(tsk);
         return tsk;
     }
 
@@ -141,7 +129,7 @@ class task : public executable {
                  return tasks_helpers::wait_for_tasks(tasks_tuple);
              }
          );
-         then_ = fork_join_task;
+         next_ = fork_join_task;
          return fork_join_task;
     }
 private:
@@ -163,38 +151,24 @@ private:
         );
         return std::make_tuple(tsk);
     }
-
     void execute() noexcept override {
         try {
-            try {
-                execute_impl();
-            }
-            catch(...){
-                std::stringstream s;
-                s << "Excepion thrown from task: ";
-                
-                if (auto name = get_task_name(); !name.empty())
-                    s << name;
-                else
-                    s << "<unnamed task>";
-                s << " (" << std::hex << this << ")";
-                std::throw_with_nested(std::runtime_error(s.str()));
-            }
+            execute_impl();
         }
         catch(...){
             promise_.set_exception(std::current_exception());
         }
 
-        // This task has finished; name is no longer necessary
-        set_task_name(std::string{});
-
-        if (then_){
-            then_->execute();
-        }
+        // Run the continuation task
+        std::scoped_lock lock{mutex_};
+        has_finished_ = true;
+        if (next_)
+            next_->execute();
     }
 
-    void execute_impl() {
+    void execute_impl(){
         if constexpr (std::is_same<result_t, void>::value){
+            // The function returns void, no value to pass to the promise
             fn_();
             promise_.set_value();
         }
@@ -203,22 +177,22 @@ private:
         }
     }
 
-    executor &executor_;
-
     std::function<result_t(void)> fn_;
     std::promise<result_t> promise_;
 
-    executable_ptr then_;
+    executable_ptr next_;
+    std::mutex mutex_;
+
+    executor &executor_;
+    bool has_finished_ = false;
 };
 
+template<typename result>
+using task_ptr = std::shared_ptr<task<result>>;
 
-// Like std::async, but requires executor and returns task
 template<NullaryFunction function_type>
 inline auto run_task(executor &ex, function_type &&fn){
     auto t = std::make_shared<task<decltype(fn())>>(ex, std::forward<function_type>(fn));
     ex.schedule(t);
     return t;
 }
-
-template<typename result>
-using task_ptr = std::shared_ptr<task<result>>;
