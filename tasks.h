@@ -92,15 +92,7 @@ class task : public executable {
                 return what(future.get());
             }
         );
-        {
-            std::scoped_lock lock{mutex_};
-            if (!has_finished_){
-                next_ = tsk;
-                return tsk;
-            }
-        }
-        // this has finished executing! Schedule the task directly with executor
-        executor_.schedule(tsk);
+        schedule_next(tsk);
         return tsk;
     }
 
@@ -129,10 +121,22 @@ class task : public executable {
                  return tasks_helpers::wait_for_tasks(tasks_tuple);
              }
          );
-         next_ = fork_join_task;
+         schedule_next(fork_join_task);
          return fork_join_task;
     }
 private:
+    void schedule_next(executable_ptr tsk){
+        {
+            std::scoped_lock lock{mutex_};
+            if (!has_finished_){
+                next_ = tsk;
+                return;
+            }
+        }
+        // this has finished executing! Schedule the task directly with executor
+        executor_.schedule(std::move(tsk));
+    }
+
     template<typename shared_future_t, UnaryFunction<result> fn_t, UnaryFunction<result> ...more>
     auto make_tasks_tuple(shared_future_t sf, const fn_t &fn, more&... fns){
         return std::tuple_cat(make_tasks_tuple(sf, fn), make_tasks_tuple(sf, fns...));
