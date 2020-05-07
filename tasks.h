@@ -142,14 +142,12 @@ private:
         return std::tuple_cat(make_tasks_tuple(sf, fn), make_tasks_tuple(sf, fns...));
     }
 
-    //TODO: the following 2 functions are work in progess
     template<typename shared_future_t, UnaryFunction<result> fn_t>
     auto make_tasks_tuple(shared_future_t sf, const fn_t &fn){
         using r = typename std::invoke_result<fn_t, result>::type;
         auto tsk = std::make_shared<task<r>>(executor_,
             [future{std::move(sf)}, fn, parent{shared_from_this()}]() mutable {
                 set_task_name("Fork wrapper");
-                std::cout << "Waiting for parent task" << std::endl;
                 return fn(future.get());
             }
         );
