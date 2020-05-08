@@ -75,6 +75,7 @@
         "queue": "cpp",
         "__functional_base_03": "cpp",
         "future": "cpp",
-        "map": "cpp"
+        "map": "cpp",
+        "coroutine": "cpp"
     }
 }

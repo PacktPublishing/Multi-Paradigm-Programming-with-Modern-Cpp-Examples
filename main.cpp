@@ -7,20 +7,68 @@
 #include <vector>
 #include <future>
 
+#include <experimental/coroutine>
+
 using namespace std::chrono_literals;
 
-template<typename iterator_t>
-auto find_above_average(iterator_t from, iterator_t to, double average){
-    std::vector<double> above_average;
-    std::copy_if(from, to,
-        std::back_inserter(above_average),
-            [average](auto price){
-                std::this_thread::sleep_for(2s);
-                return price > average;
-            });
+class coroutine_result {
+    public:
+    int value = 0;
 
-    return above_average;
+    struct promise_type;
+    using handle = std::experimental::coroutine_handle<promise_type>;
+
+    struct promise_type{
+
+        coroutine_result get_return_object() {
+            std::cout << " promise_type::get_return_object()" << std::endl;
+            return coroutine_result{1};
+        }
+
+        auto initial_suspend() { 
+            std::cout << " promise_type::initial_suspend()" << std::endl;
+            return std::experimental::suspend_never{};
+        }
+
+        auto final_suspend() { 
+            std::cout << " promise_type::final_suspend()" << std::endl;
+            return std::experimental::suspend_never{}; 
+        }
+
+        void unhandled_exception() { 
+            std::cout << " promise_type::unhandled_exception()" << std::endl;
+            std::terminate();
+        }
+
+        void return_void(){
+            std::cout << " promise_type::return_void()" << std::endl;
+        }
+    };
+};
+
+/*
+class awaiter : public std::experimental::suspend_always {
+    public:
+    bool await_ready() const noexcept {
+         std::cout << " awaitable::await_ready()" << std::endl;
+         return false;
+    }
+    void await_suspend(std::experimental::coroutine_handle<>) const noexcept {
+         std::cout << " awaitable::await_suspend()" << std::endl;
+    }
+    void await_resume() const noexcept {
+         std::cout << " awaitable::await_resume()" << std::endl;
+    }
+};
+*/
+
+coroutine_result my_coro(){
+    std::cout << "In coroutine" << std::endl;
+    std::cout << "Suspending coroutine..." << std::endl;
+    co_await std::experimental::suspend_always{};
+    std::cout << "Coroutine resumed!" << std::endl;
 }
+
 int main(int argc, char *argv[]) {
 
     using namespace std;
@@ -31,63 +79,8 @@ int main(int argc, char *argv[]) {
     constexpr auto parallelism_level = 8;
     executor ex { parallelism_level };
 
-    auto future = run_task(ex, [&daily_price](){
-        auto average = 0.0;
-        for (auto p: daily_price)
-            average += p;
-        average /= daily_price.size();
-        return average;
-    })->then_fork(
-        [&daily_price](double average){
-            auto sum_squares = 0.0;
-            for (auto price: daily_price){
-                auto distance = price - average;
-                sum_squares += distance * distance;
-            }
-            return sqrt(sum_squares / (daily_price.size() - 1));
-        },
-        [&daily_price, &ex](double average){
-            std::vector<double> above_average;
-            const auto nof_chunks = parallelism_level;
-            const auto chunk_size = daily_price.size() / nof_chunks;
-
-            auto from = daily_price.begin();
-            auto to = from + chunk_size;
-
-            auto start = chrono::steady_clock::now();
-
-            vector<task_ptr<vector<double>>> tasks;
-            for (auto i = 0; i < nof_chunks; ++i){
-                if (i == nof_chunks - 1)
-                    to = daily_price.end();
-                
-                tasks.push_back(
-                    run_task(ex, [average, from, to](){
-                        return find_above_average(from, to, average);
-                    })
-                );
-
-                from = to;
-                to += chunk_size;
-            }
-
-            for (auto &t: tasks){
-                auto task_result = t->get_future().get();
-                above_average.insert(above_average.end(), task_result.begin(), task_result.end());
-            }
-
-            cout << "Elapsed time in seconds: "
-                 << chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - start).count()
-                 << std::endl;
-            return above_average;
-        }
-    )->then([](auto &&results_tuple){
-        cout << "Standard deviation: " << std::get<0>(results_tuple) << std::endl;
-        cout << "Elements above average: " << std::get<1>(results_tuple).size() << std::endl;
-    })->get_future();
-
     std::cout << "Executing..." << std::endl;
-    future.wait();
 
-    cout << "Finished" << endl;
+    auto result = my_coro();
+    std::cout << "Corutine has returned " << result.value << endl;
 }
