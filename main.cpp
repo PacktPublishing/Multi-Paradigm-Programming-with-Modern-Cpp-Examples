@@ -1,86 +1,159 @@
-#include "tasks.h"
-
-#include <chrono>
 #include <iostream>
-#include <numeric>
-#include <thread>
-#include <vector>
-#include <future>
-
+#include <memory>
 #include <experimental/coroutine>
 
-using namespace std::chrono_literals;
-
-class coroutine_result {
+class lazy_int {
     public:
-    int value = 0;
+    int value() const {
+        if (auto handle = shared_state_->handle){
+            // Resume the coroutine to calculate the final value
+            handle.resume();
+        }
+        // When we get here, the coroutine has resumed and returned 
+        return shared_state_->value;
+    }
 
     struct promise_type;
-    using handle = std::experimental::coroutine_handle<promise_type>;
+    using handle_type = std::experimental::coroutine_handle<promise_type>;
 
-    struct promise_type{
+    private:
+    lazy_int(handle_type handle)
+        : shared_state_{std::make_shared<state>()}
+    {
+        shared_state_->handle = handle;
+    }
 
-        coroutine_result get_return_object() {
-            std::cout << " promise_type::get_return_object()" << std::endl;
-            return coroutine_result{1};
-        }
+    struct state{
+        int value = 0;
+        handle_type handle;
 
-        auto initial_suspend() { 
-            std::cout << " promise_type::initial_suspend()" << std::endl;
-            return std::experimental::suspend_never{};
-        }
-
-        auto final_suspend() { 
-            std::cout << " promise_type::final_suspend()" << std::endl;
-            return std::experimental::suspend_never{}; 
-        }
-
-        void unhandled_exception() { 
-            std::cout << " promise_type::unhandled_exception()" << std::endl;
-            std::terminate();
-        }
-
-        void return_void(){
-            std::cout << " promise_type::return_void()" << std::endl;
+        ~state(){
+            if (handle)
+                handle.destroy();
         }
     };
+
+    std::shared_ptr<state> shared_state_;
 };
 
-/*
-class awaiter : public std::experimental::suspend_always {
-    public:
-    bool await_ready() const noexcept {
-         std::cout << " awaitable::await_ready()" << std::endl;
-         return false;
+struct lazy_int::promise_type {
+    std::weak_ptr<state> shared_state_;
+
+    auto get_return_object() {
+        std::cout<< "promise_type::get_return_object()" << std::endl;
+
+        auto handle = handle_type::from_promise(*this);
+
+        auto return_object = lazy_int{handle};
+        shared_state_ = return_object.shared_state_;
+        return return_object;
     }
-    void await_suspend(std::experimental::coroutine_handle<>) const noexcept {
-         std::cout << " awaitable::await_suspend()" << std::endl;
+
+    auto initial_suspend() {
+        std::cout << "promise_type::initial_suspend()" << std::endl;
+        return std::experimental::suspend_always{};
     }
-    void await_resume() const noexcept {
-         std::cout << " awaitable::await_resume()" << std::endl;
+
+    auto final_suspend() {
+        std::cout << "promise_type::final_suspend()" << std::endl;
+        // Avoid double-deletion of the coroutine frame
+        if (auto state = shared_state_.lock())
+            state->handle = nullptr;
+
+        return std::experimental::suspend_never{};
+    }
+
+    auto return_value(int value){
+        std::cout << "promise_type::return_value()" << std::endl;
+        if (auto state = shared_state_.lock())
+            state->value = value;
+    }
+
+    auto unhandled_exception() {
+        std::cout << "promise_type::unhandled_exception()" << std::endl;
+        std::terminate();
+    }
+
+};
+
+
+struct return_type{
+    // Your return type
+};
+
+struct promise_type {
+    auto get_return_object() {                      // Return value of a coroutine
+        return return_type{};
+    }
+
+    auto initial_suspend() {                        // Suspend a coroutine before running it?
+        return std::experimental::suspend_never{};
+    }
+
+    auto final_suspend() {                          // Suspend a coroutine before exiting it?
+        return std::experimental::suspend_never{};
+    }
+
+    void return_value(auto value){                  // Invoked when co_return is used.
+                                                    // Update the return object here
+    }
+
+    auto yield_value(auto value){                   // Invoked when co_yield is used.
+        return std::experimental::suspend_always{}; // Update the return object here
+    }
+
+    auto unhandled_exception() {                    // Invoked when coroutine code throws
+        std::terminate();
     }
 };
-*/
 
-coroutine_result my_coro(){
-    std::cout << "In coroutine" << std::endl;
-    std::cout << "Suspending coroutine..." << std::endl;
-    co_await std::experimental::suspend_always{};
-    std::cout << "Coroutine resumed!" << std::endl;
+task<int> calculate_average(){
+    co_await switch_to_task_thread{};
+    double average = 0;
+    // (calculaion code skipped)
+    co_return average;
+}
+
+
+lazy_int my_coro(){
+    std::cout << "The coroutine has resumed" << std::endl;
+
+    co_return 42;
+}
+
+// This awaiter is from STL
+// It suspends the coroutine unconditionally
+
+struct suspend_always {
+
+  bool await_ready() const noexcept {
+      // Is the coroutine ready to resume immediately?
+      // Returning true would make this suspend_never
+      return false;
+  }
+
+  void await_suspend(coroutine_handle<>) const noexcept {
+      // Called when the coroutine is suspended.
+      // You can schedule resumption here.
+  }
+
+  void await_resume() const noexcept {
+      // Called before the coroutine resumes.
+      // You can do 
+  }
+};
+
+
+lazy_int another_coro(){
+    int value = 0;
+    // Only ask for the value when the caller needs to use it
+    std::cout << "Please enter a value: ";
+    std::cin >> value;
+    co_return value;
 }
 
 int main(int argc, char *argv[]) {
-
-    using namespace std;
-
-    vector<double> daily_price = { 100.3, 101.5, 99.2, 105.1, 101.93,
-                                   96.7, 97.6, 103.9, 105.8, 101.2};
-
-    constexpr auto parallelism_level = 8;
-    executor ex { parallelism_level };
-
-    std::cout << "Executing..." << std::endl;
-
+    std::cout << "Calling the coroutine..." << std::endl;
     auto result = my_coro();
-    std::cout << "Corutine has returned " << result.value << endl;
+    //std::cout << "Coroutine has returned " << result.value() << std::endl;
 }
