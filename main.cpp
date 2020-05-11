@@ -76,73 +76,11 @@ struct lazy_int::promise_type {
 
 };
 
-
-struct return_type{
-    // Your return type
-};
-
-struct promise_type {
-    auto get_return_object() {                      // Return value of a coroutine
-        return return_type{};
-    }
-
-    auto initial_suspend() {                        // Suspend a coroutine before running it?
-        return std::experimental::suspend_never{};
-    }
-
-    auto final_suspend() {                          // Suspend a coroutine before exiting it?
-        return std::experimental::suspend_never{};
-    }
-
-    void return_value(auto value){                  // Invoked when co_return is used.
-                                                    // Update the return object here
-    }
-
-    auto yield_value(auto value){                   // Invoked when co_yield is used.
-        return std::experimental::suspend_always{}; // Update the return object here
-    }
-
-    auto unhandled_exception() {                    // Invoked when coroutine code throws
-        std::terminate();
-    }
-};
-
-task<int> calculate_average(){
-    co_await switch_to_task_thread{};
-    double average = 0;
-    // (calculaion code skipped)
-    co_return average;
-}
-
-
 lazy_int my_coro(){
     std::cout << "The coroutine has resumed" << std::endl;
 
     co_return 42;
 }
-
-// This awaiter is from STL
-// It suspends the coroutine unconditionally
-
-struct suspend_always {
-
-  bool await_ready() const noexcept {
-      // Is the coroutine ready to resume immediately?
-      // Returning true would make this suspend_never
-      return false;
-  }
-
-  void await_suspend(coroutine_handle<>) const noexcept {
-      // Called when the coroutine is suspended.
-      // You can schedule resumption here.
-  }
-
-  void await_resume() const noexcept {
-      // Called before the coroutine resumes.
-      // You can do 
-  }
-};
-
 
 lazy_int another_coro(){
     int value = 0;
