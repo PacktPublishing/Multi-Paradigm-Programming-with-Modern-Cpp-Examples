@@ -20,9 +20,10 @@ concept TaskResult =
 
 // A coroutine-based task
 template<typename T>
-concept Task = requires {
+concept Task = requires (T t) {
     typename T::task_type;
     typename T::promise_type;
+    typename T::handle_type;
 };
 
 // Debug output for a task
@@ -95,7 +96,6 @@ class ctask {
     public:
     // Picked up by coroutine_traits
     using promise_type = coroutine_promise;
-    // A few shortcuts
     using task_type = ctask<result_t>;
     using handle_type = std::experimental::coroutine_handle<task_type::promise_type>;
 
