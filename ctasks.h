@@ -32,6 +32,7 @@ inline void ctask_debug(std::string msg){
     std::cerr << "\t" << msg << std::endl;
 }
 
+using tasks_executor_provider = executor_provider<>;
 
 // Schedules the ctask to be resumed on an executor thread
 template<Task task_t>
@@ -39,14 +40,14 @@ class schedule_task : public std::experimental::suspend_always{
     public:
     void await_suspend(typename task_t::handle_type handle) const noexcept {
         auto &promise = handle.promise();
-        task_t::executor_provider::executor().schedule(promise.get_state());
+        tasks_executor_provider::executor().schedule(promise.get_state());
     }
 };
 
 // Suspends the current task until another task finishes.
 // Tasks don't have to be on the same executor.
 // Resumption will always happen on the executor of the current task.
-template<Task task_type, ExecutorProvider continuation_exp>
+template<Task task_type>
 class ctask_awaiter{
     public:
     ctask_awaiter(task_type t)
@@ -69,7 +70,7 @@ class ctask_awaiter{
             return false;
 
         // Tell the task to schedule a continuation
-        task_.add_continuation(handle, continuation_exp::executor());
+        task_.add_continuation(handle, tasks_executor_provider::executor());
         return true;
     }
 
@@ -86,7 +87,7 @@ class ctask_awaiter{
 // A coroutine must return a ctask<T>. 
 // The coroutine will always run on an executor thread.
 // Executor to use can be specified through a template argument.
-template<TaskResult result_t, ExecutorProvider exp = executor_provider<>>
+template<TaskResult result_t>
 class ctask {
     struct coroutine_promise;
     struct state;
@@ -145,7 +146,7 @@ class ctask {
 //
 // Also launches continuations once finished
 //
-template<TaskResult result_t, ExecutorProvider exp>
+template<TaskResult result_t>
 struct ctask<result_t, exp>::state : public executable {
 
     void execute() noexcept override{
@@ -162,7 +163,7 @@ struct ctask<result_t, exp>::state : public executable {
 };
 
 // Coroutine promise for the ctask
-template<TaskResult result_t, ExecutorProvider exp>
+template<TaskResult result_t>
 struct ctask<result_t, exp>::coroutine_promise {
 
     void debug(std::string msg){
@@ -203,7 +204,7 @@ struct ctask<result_t, exp>::coroutine_promise {
     template<Task other_task_t>
     auto await_transform(other_task_t other_task){
         debug("Wait for another task to complete");
-        return ctask_awaiter<other_task_t, exp>{std::move(other_task)};
+        return ctask_awaiter<other_task_t>{std::move(other_task)};
     }
 
     // Hack: use "co_await <string>" to set the name of the promise
