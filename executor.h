@@ -12,6 +12,7 @@
 class executable : public std::enable_shared_from_this<executable>{
     public:
     virtual void execute() noexcept = 0;
+    virtual ~executable() = default;
 };
 
 using executable_ptr = std::shared_ptr<executable>;
@@ -82,3 +83,17 @@ class executor final{
 
     std::atomic<bool> active_ = true;
 };
+
+constexpr size_t DEFAULT_CONCURRENCY = 4;
+
+template<size_t concurrency_level = DEFAULT_CONCURRENCY>
+class executor_provider {
+    public:
+    static executor &executor(){
+        static class executor ex{concurrency_level};
+        return ex;
+    }
+};
+
+template<typename T>
+concept ExecutorProvider = std::is_same<decltype(T::executor()), executor&>::value;

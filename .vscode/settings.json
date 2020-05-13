@@ -76,6 +76,7 @@
         "__functional_base_03": "cpp",
         "future": "cpp",
         "map": "cpp",
-        "coroutine": "cpp"
+        "coroutine": "cpp",
+        "condition_variable": "cpp"
     }
 }

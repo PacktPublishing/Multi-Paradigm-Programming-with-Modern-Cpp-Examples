@@ -1,97 +1,150 @@
+#include "ctasks.h"
+
+#include <chrono>
+#include <cmath>
 #include <iostream>
 #include <memory>
-#include <experimental/coroutine>
+#include <vector>
 
-class lazy_int {
-    public:
-    int value() const {
-        if (auto handle = shared_state_->handle){
-            // Resume the coroutine to calculate the final value
-            handle.resume();
-        }
-        // When we get here, the coroutine has resumed and returned 
-        return shared_state_->value;
-    }
-
-    struct promise_type;
-    using handle_type = std::experimental::coroutine_handle<promise_type>;
-
-    private:
-    lazy_int(handle_type handle)
-        : shared_state_{std::make_shared<state>()}
-    {
-        shared_state_->handle = handle;
-    }
-
-    struct state{
-        int value = 0;
-        handle_type handle;
-
-        ~state(){
-            if (handle)
-                handle.destroy();
-        }
-    };
-
-    std::shared_ptr<state> shared_state_;
-};
-
-struct lazy_int::promise_type {
-    std::weak_ptr<state> shared_state_;
-
-    auto get_return_object() {
-        std::cout<< "promise_type::get_return_object()" << std::endl;
-
-        auto handle = handle_type::from_promise(*this);
-
-        auto return_object = lazy_int{handle};
-        shared_state_ = return_object.shared_state_;
-        return return_object;
-    }
-
-    auto initial_suspend() {
-        std::cout << "promise_type::initial_suspend()" << std::endl;
-        return std::experimental::suspend_always{};
-    }
-
-    auto final_suspend() {
-        std::cout << "promise_type::final_suspend()" << std::endl;
-        // Avoid double-deletion of the coroutine frame
-        if (auto state = shared_state_.lock())
-            state->handle = nullptr;
-
-        return std::experimental::suspend_never{};
-    }
-
-    auto return_value(int value){
-        std::cout << "promise_type::return_value()" << std::endl;
-        if (auto state = shared_state_.lock())
-            state->value = value;
-    }
-
-    auto unhandled_exception() {
-        std::cout << "promise_type::unhandled_exception()" << std::endl;
-        std::terminate();
-    }
-
-};
-
-lazy_int my_coro(){
-    std::cout << "The coroutine has resumed" << std::endl;
-
-    co_return 42;
+void print_thread_id(){
+    std::cout << "Current thread ID: " << std::this_thread::get_id() << std::endl;
 }
 
-lazy_int another_coro(){
-    int value = 0;
-    // Only ask for the value when the caller needs to use it
-    std::cout << "Please enter a value: ";
-    std::cin >> value;
-    co_return value;
+struct alternative_exp{
+    static executor &executor() {
+        static class executor ex{8};
+        return ex;
+    }
+};
+
+ctask<int, alternative_exp> multiply(int a, int b){
+    // We are in an executor thread now!
+    print_thread_id();
+    co_return a * b;
+}
+
+ctask<int> mul_add(int a, int b, int c, int d){
+
+    auto tsk = multiply(a, b);
+    auto p2 = co_await multiply(c, d);
+    auto p1 = co_await tsk;
+
+    co_return p1 + p2;
+}
+
+template<typename iterator_t>
+ctask<std::vector<double>> find_above_average(iterator_t from, iterator_t to, double average){
+    co_await "ChunkAboveAverage";
+    using namespace std::chrono_literals;
+    std::vector<double> above_average;
+    std::copy_if(from, to,
+        std::back_inserter(above_average),
+            [average](auto price){
+                std::this_thread::sleep_for(2s);
+                return price > average;
+            });
+
+    co_return above_average;
+}
+
+ctask<int> fork_join_example(){
+
+    co_await "Root";
+
+    using namespace std;
+    constexpr size_t parallelism_level = 4;
+    vector<double> daily_price = { 100.3, 101.5, 99.2, 105.1, 101.93,
+                                   96.7, 97.6, 103.9, 105.8, 101.2};
+
+    std::cout << "Compute average" << std::endl;
+
+    // Compute average (resume once available)
+    auto average = co_await [&daily_price]() -> ctask<double> {
+        co_await "Average";
+
+        auto average = 0.0;
+        for (auto p: daily_price)
+            average += p;
+        average /= daily_price.size();
+        co_return average;
+    }();
+
+    std::cout << "Compute standard deviation" << std::endl;
+
+    // Fork branch 1: compute stddev (no co_await: do not suspend!)
+    auto stddev_task = [&daily_price](double average) -> ctask<double>{
+            co_await "StdDev";
+
+            auto sum_squares = 0.0;
+            for (auto price: daily_price){
+                auto distance = price - average;
+                sum_squares += distance * distance;
+            }
+            co_return sqrt(sum_squares / (daily_price.size() - 1));
+        }(average);
+    
+    std::cout << "Find items above average" << std::endl;
+
+    // For branch 2: find items above average (no co_await)
+    auto above_average_task =
+        [&daily_price](double average) -> ctask<vector<double>>{
+            co_await "AboveAverage";
+
+            vector<double> above_average;
+            const auto nof_chunks = parallelism_level;
+            const auto chunk_size = daily_price.size() / nof_chunks;
+
+            auto from = daily_price.begin();
+            auto to = from + chunk_size;
+
+            auto start = chrono::steady_clock::now();
+
+            std::cout << nof_chunks << " tasks must be created" << std::endl;
+
+            vector<ctask<vector<double>>> tasks;
+            for (auto i = 0; i < nof_chunks; ++i){
+                if (i == nof_chunks - 1)
+                    to = daily_price.end();
+                
+                tasks.push_back(
+                    find_above_average(from, to, average)
+                );
+
+                from = to;
+                to += chunk_size;
+            }
+
+            for (auto &t: tasks){
+                auto task_result = co_await t;
+                above_average.insert(above_average.end(), task_result.begin(), task_result.end());
+            }
+
+            cout << "Elapsed time in seconds: "
+                 << chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - start).count()
+                 << endl;
+
+            co_return above_average;
+        }(average);
+
+    cout << "Standard deviation: " << co_await stddev_task << endl;
+    cout << "Elements above average: " << (co_await above_average_task).size() << endl;
+
+    co_return 0;
 }
 
 int main(int argc, char *argv[]) {
-    std::cout << "Calling the coroutine..." << std::endl;
-    auto result = my_coro();
-    //std::cout << "Coroutine has returned " << result.value() << std::endl;
+    std::cout << "In main" << std::endl;
+    print_thread_id();
+
+
+    //auto tsk = mul_add(17, 24, 21, 2);
+
+    //auto tsk = []() -> ctask<int>{
+    //    co_return 3 + 2;
+    //}();
+
+    //std::cout << tsk.get() << std::endl;
+
+    // Do not let main() return until fork_join_example finishes
+    return fork_join_example().get();
 }
