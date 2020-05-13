@@ -71,11 +71,14 @@ class ctask_awaiter{
             return false;
 
         // Tell the task to schedule a continuation
-        task_.add_continuation(handle, tasks_executor_provider::executor());
+        task_.add_continuation(handle);
         return true;
     }
 
     auto await_resume() const noexcept {
+        // Determines return type and value of co_await
+        // e. g. task<int> tsk = calculate();
+        // int x = co_await tsk;
         return task_.get();
     }
 
@@ -125,8 +128,8 @@ class ctask {
 
     // Add a coroutine handle to be resumed on an executor thread once this task finishes.
     // If the task has already finished, then the coroutine is resumed immediately (on an executor thread)
-    void add_continuation(std::experimental::coroutine_handle<> handle, executor &continuation_ex){
-        shared_state_->continuations.add(handle, &continuation_ex);
+    void add_continuation(std::experimental::coroutine_handle<> handle){
+        shared_state_->continuations.add(handle, &tasks_executor_provider::executor());
         // An additional guard in case the task has finished during the call to continuations.add
         if (ready()){
             shared_state_->continuations.resume_all();
@@ -152,7 +155,6 @@ struct ctask<result_t>::state : public executable {
         if (handle){
             ctask_debug(" [Resuming coroutine on an executor thread] ");
             handle.resume();
-            continuations.resume_all();
         }
     }
 
@@ -192,8 +194,9 @@ struct ctask<result_t>::coroutine_promise {
     template<TaskResult T>
     auto return_value(T &&value){
         debug ("Return value");
-        get_state()->result.set_value(std::forward<T>(value));
-        //TODO: whatabout void?
+        auto state = get_state();
+        state->result.set_value(std::forward<T>(value));
+        state->continuations.resume_all();
     }
 
     auto unhandled_exception() {
