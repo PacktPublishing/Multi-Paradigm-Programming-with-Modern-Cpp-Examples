@@ -96,9 +96,8 @@ class ctask {
     // Picked up by coroutine_traits
     using promise_type = coroutine_promise;
     // A few shortcuts
-    using task_type = ctask<result_t, exp>;
+    using task_type = ctask<result_t>;
     using handle_type = std::experimental::coroutine_handle<task_type::promise_type>;
-    using executor_provider = exp;
 
     // Initializes the task and its shared state.
     // Immediately grabs the shared future from the promise.
@@ -147,7 +146,7 @@ class ctask {
 // Also launches continuations once finished
 //
 template<TaskResult result_t>
-struct ctask<result_t, exp>::state : public executable {
+struct ctask<result_t>::state : public executable {
 
     void execute() noexcept override{
         if (handle){
@@ -164,7 +163,7 @@ struct ctask<result_t, exp>::state : public executable {
 
 // Coroutine promise for the ctask
 template<TaskResult result_t>
-struct ctask<result_t, exp>::coroutine_promise {
+struct ctask<result_t>::coroutine_promise {
 
     void debug(std::string msg){
         ctask_debug(name_ + " [" + msg + "]");

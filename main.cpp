@@ -17,7 +17,7 @@ struct alternative_exp{
     }
 };
 
-ctask<int, alternative_exp> multiply(int a, int b){
+ctask<int> multiply(int a, int b){
     // We are in an executor thread now!
     print_thread_id();
     co_return a * b;
@@ -138,11 +138,6 @@ int main(int argc, char *argv[]) {
 
 
     //auto tsk = mul_add(17, 24, 21, 2);
-
-    //auto tsk = []() -> ctask<int>{
-    //    co_return 3 + 2;
-    //}();
-
     //std::cout << tsk.get() << std::endl;
 
     // Do not let main() return until fork_join_example finishes
