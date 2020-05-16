@@ -35,7 +35,6 @@ inline void ctask_debug(std::string msg){
 
 using tasks_executor_provider = executor_provider<>;
 
-// Schedules the ctask to be resumed on an executor thread
 template<Task task_t>
 class schedule_task : public std::experimental::suspend_always{
     public:
@@ -45,47 +44,33 @@ class schedule_task : public std::experimental::suspend_always{
     }
 };
 
-// Suspends the current task until another task finishes.
-// Tasks don't have to be on the same executor.
-// Resumption will always happen on the executor of the current task.
-template<Task task_type>
-class ctask_awaiter{
+template<Task task_t>
+class ctask_awaiter {
     public:
-    ctask_awaiter(task_type t)
-        : task_{std::move(t)}
-    {
-    }
+    ctask_awaiter(task_t t) : task_{std::move(t)}
+    {}
 
-    bool await_ready() const noexcept { 
-        // Do not suspend if the task has already finished
-        return task_.ready(); 
+    bool await_ready() const noexcept {
+        return task_.ready();
     }
 
     bool await_suspend(std::experimental::coroutine_handle<> handle) noexcept {
-        // The coroutine has been suspended
-
-        // We want to resume once the task is ready
-        // If it's become ready while we were suspending,
-        // then resume immediately
         if (task_.ready())
             return false;
-
-        // Tell the task to schedule a continuation
         task_.add_continuation(handle);
         return true;
     }
 
-    auto await_resume() const noexcept {
-        // Determines return type and value of co_await
-        // e. g. task<int> tsk = calculate();
+    auto await_resume() const {
+        // e. g. 
+        // task<int> tsk = calculate();
         // int x = co_await tsk;
         return task_.get();
     }
 
     private:
-    task_type task_;
+    task_t task_;
 };
-
 
 // An asyncrhonous tasks that uses coroutines.
 // A coroutine must return a ctask<T>. 
@@ -97,70 +82,50 @@ class ctask {
     struct state;
 
     public:
-    // Picked up by coroutine_traits
-    using promise_type = coroutine_promise;
-    using task_type = ctask<result_t>;
-    using handle_type = std::experimental::coroutine_handle<task_type::promise_type>;
-
-    // Initializes the task and its shared state.
-    // Immediately grabs the shared future from the promise.
-    // So all copies will share the state and the shared future.
     ctask()
-        : shared_state_{std::make_shared<state>()}
-        , shared_future_{shared_state_->result.get_future()}
-    {
-    }
+        : shared_state_ { std::make_shared<state>() }
+        , shared_future_{ shared_state_->result.get_future() }
+    {}
 
-    // Get task result. Blocks until the task finishes.
-    auto get() const{
+    auto get() const {
         return shared_future_.get();
     }
 
-    // Blocks until the task finishes
-    auto wait() const{
+    auto wait() const {
         shared_future_.wait();
     }
 
-    // Returns true when the result is available
-    auto ready() const{
+    bool ready() const {
         return shared_future_.wait_for(std::chrono::duration<size_t>::zero()) == std::future_status::ready;
     }
 
-    // Add a coroutine handle to be resumed on an executor thread once this task finishes.
-    // If the task has already finished, then the coroutine is resumed immediately (on an executor thread)
     void add_continuation(std::experimental::coroutine_handle<> handle){
         shared_state_->continuations.add(handle, &tasks_executor_provider::executor());
-        // An additional guard in case the task has finished during the call to continuations.add
         if (ready()){
             shared_state_->continuations.resume_all();
         }
     }
+
+    using promise_type = coroutine_promise;
+    using task_type = ctask<result_t>;
+    using handle_type = std::experimental::coroutine_handle<task_type::promise_type>;
 
     private:
     std::shared_ptr<state> shared_state_;
     std::shared_future<result_t> shared_future_;
 };
 
-//
 // Shared between all instances of a task, and keeps the coroutine handle.
-// Implements executable interface.
-// When passed to an executor, will resume() the coroutine when executed.
-//
-// Also launches continuations once finished
-//
 template<TaskResult result_t>
 struct ctask<result_t>::state : public executable {
-
-    void execute() noexcept override{
-        if (handle){
-            ctask_debug(" [Resuming coroutine on an executor thread] ");
-            handle.resume();
-        }
+    void execute() noexcept override {
+        ctask_debug(" [Resuming on executor thread] ");
+        handle.resume();
     }
 
-    executor_resumer continuations;
     std::promise<result_t> result;
     handle_type handle;
+    executor_resumer continuations;
 };
 
 // Coroutine promise for the ctask
@@ -172,10 +137,9 @@ struct ctask<result_t>::coroutine_promise {
     }
 
     auto get_return_object() {
-        // Construct a task and store a pointer to its shared state
         auto tsk = task_type{};
-        tsk.shared_state_->handle = handle_type::from_promise(*this);
         shared_state_ = tsk.shared_state_;
+        tsk.shared_state_->handle = handle_type::from_promise(*this);
         return tsk;
     }
 
@@ -186,8 +150,6 @@ struct ctask<result_t>::coroutine_promise {
 
     auto final_suspend() {
         debug("Final suspend");
-        if (auto state = shared_state_.lock())
-            state->handle = nullptr;
         return std::experimental::suspend_never{};
     }
 
@@ -209,10 +171,8 @@ struct ctask<result_t>::coroutine_promise {
         return ctask_awaiter<other_task_t>{std::move(other_task)};
     }
 
-    // Hack: use "co_await <string>" to set the name of the promise
     auto await_transform(std::string name){
         name_ = name;
-        debug("");
         return std::experimental::suspend_never{};
     }
 
